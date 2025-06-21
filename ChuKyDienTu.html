@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Chữ Ký Điện Tử (Chữ Ký Số) - Web App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #0056b3;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        textarea, input[type="text"] {
+            width: calc(100% - 16px);
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1.4rem;
+            resize: vertical; /* Cho phép thay đổi kích thước theo chiều dọc */
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.4rem;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result-box {
+            background-color: #e9ecef;
+            border: 1px solid #ced4da;
+            padding: 10px;
+            border-radius: 4px;
+            min-height: 50px;
+            margin-bottom: 15px;
+            overflow-wrap: break-word; /* Đảm bảo nội dung không tràn ra ngoài */
+        }
+        .success-message {
+            color: green;
+            font-weight: bold;
+        }
+        .error-message {
+            color: red;
+            font-weight: bold;
+        }.container label{
+            font-size: 1.4rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Demo Chữ Ký Điện Tử (Chữ Ký Số)</h1>
+
+        <label for="messageInput">Thông điệp cần ký:</label>
+        <textarea id="messageInput" rows="5" placeholder="Nhập thông điệp của bạn tại đây..."></textarea>
+
+        <button id="generateKeysBtn">Tạo Cặp Khóa (RSA)</button>
+        <button id="signMessageBtn">Ký Thông Điệp</button>
+        <button id="verifySignatureBtn">Kiểm Tra Chữ Ký</button>
+
+        <hr style="margin-top: 20px; margin-bottom: 20px;">
+
+        <label>Khóa Công Khai (Public Key):</label>
+        <textarea id="publicKeyOutput" rows="4" readonly></textarea>
+
+        <label>Khóa Bí Mật (Private Key):</label>
+        <textarea id="privateKeyOutput" rows="4" readonly></textarea>
+
+        <label>Chữ Ký (Digital Signature - Base64 encoded):</label>
+        <textarea id="signatureOutput" rows="4" readonly></textarea>
+
+        <label>Kết Quả Xác Minh:</label>
+        <div id="verificationResult" class="result-box">Chưa có kết quả xác minh.</div>
+    </div>
+
+    <script>
+        // Lấy các tham chiếu đến các phần tử UI
+        const messageInput = document.getElementById('messageInput');
+        const generateKeysBtn = document.getElementById('generateKeysBtn');
+        const signMessageBtn = document.getElementById('signMessageBtn');
+        const verifySignatureBtn = document.getElementById('verifySignatureBtn');
+        const publicKeyOutput = document.getElementById('publicKeyOutput');
+        const privateKeyOutput = document.getElementById('privateKeyOutput');
+        const signatureOutput = document.getElementById('signatureOutput');
+        const verificationResult = document.getElementById('verificationResult');
+
+        let currentKeyPair = null; // Biến để lưu trữ cặp khóa hiện tại
+
+        // --- Hàm tiện ích: Chuyển đổi ArrayBuffer sang Base64 ---
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // --- Hàm tiện ích: Chuyển đổi Base64 sang ArrayBuffer ---
+        function base64ToArrayBuffer(base64) {
+            const binary_string = window.atob(base64);
+            const len = binary_string.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binary_string.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // --- Hàm Tạo Cặp Khóa ---
+        generateKeysBtn.addEventListener('click', async () => {
+            verificationResult.textContent = "Đang tạo cặp khóa...";
+            verificationResult.className = 'result-box'; // Reset class
+            try {
+                // Tạo cặp khóa RSA
+                currentKeyPair = await crypto.subtle.generateKey(
+                    {
+                        name: "RSASSA-PKCS1-v1_5", // Thuật toán chữ ký
+                        modulusLength: 2048,      // Độ dài khóa (bits)
+                        publicExponent: new Uint8Array([0x01, 0x00, 0x01]), // 65537
+                        hash: "SHA-256",          // Thuật toán băm dùng cho chữ ký
+                    },
+                    true, // true = có thể xuất (export) khóa
+                    ["sign", "verify"] // Có thể dùng để ký và xác minh
+                );
+
+                // Export khóa công khai (định dạng SPKI) và khóa bí mật (định dạng PKCS#8) để hiển thị
+                const exportedPublicKey = await crypto.subtle.exportKey(
+                    "spki", // SubjectPublicKeyInfo
+                    currentKeyPair.publicKey
+                );
+                const exportedPrivateKey = await crypto.subtle.exportKey(
+                    "pkcs8", // PrivateKeyInfo
+                    currentKeyPair.privateKey
+                );
+
+                // Chuyển đổi sang Base64 để hiển thị
+                publicKeyOutput.value = arrayBufferToBase64(exportedPublicKey);
+                privateKeyOutput.value = arrayBufferToBase64(exportedPrivateKey);
+
+                verificationResult.className = 'result-box success-message';
+                verificationResult.textContent = "Đã tạo cặp khóa RSA thành công!";
+            } catch (error) {
+                console.error("Lỗi khi tạo cặp khóa:", error);
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Lỗi khi tạo cặp khóa: " + error.message;
+            }
+        });
+
+        // --- Hàm Ký Thông Điệp ---
+        signMessageBtn.addEventListener('click', async () => {
+            const message = messageInput.value;
+            if (!message) {
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Vui lòng nhập thông điệp để ký.";
+                return;
+            }
+            if (!currentKeyPair || !currentKeyPair.privateKey) {
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Vui lòng tạo cặp khóa trước.";
+                return;
+            }
+
+            verificationResult.textContent = "Đang ký thông điệp...";
+            verificationResult.className = 'result-box'; // Reset class
+            try {
+                const encoder = new TextEncoder(); // Giúp chuyển chuỗi sang byte
+                const data = encoder.encode(message); // Mã hóa thông điệp thành byte
+
+                // Ký thông điệp bằng khóa bí mật
+                const signature = await crypto.subtle.sign(
+                    {
+                        name: "RSASSA-PKCS1-v1_5",
+                    },
+                    currentKeyPair.privateKey, // Khóa bí mật
+                    data // Dữ liệu đã mã hóa
+                );
+
+                // Chuyển đổi chữ ký sang Base64 để hiển thị
+                signatureOutput.value = arrayBufferToBase64(signature);
+
+                verificationResult.className = 'result-box success-message';
+                verificationResult.textContent = "Đã ký thông điệp thành công!";
+            } catch (error) {
+                console.error("Lỗi khi ký thông điệp:", error);
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Lỗi khi ký thông điệp: " + error.message;
+            }
+        });
+
+        // --- Hàm Kiểm Tra Chữ Ký ---
+        verifySignatureBtn.addEventListener('click', async () => {
+            const message = messageInput.value;
+            const signatureBase64 = signatureOutput.value;
+
+            if (!message || !signatureBase64) {
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Vui lòng nhập thông điệp và tạo chữ ký trước.";
+                return;
+            }
+            if (!currentKeyPair || !currentKeyPair.publicKey) {
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Chưa có khóa công khai để xác minh.";
+                return;
+            }
+
+            verificationResult.textContent = "Đang kiểm tra chữ ký...";
+            verificationResult.className = 'result-box'; // Reset class
+            try {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(message);
+                const signatureBytes = base64ToArrayBuffer(signatureBase64); // Chuyển đổi chữ ký từ Base64 về byte
+
+                // Xác minh chữ ký
+                const isValid = await crypto.subtle.verify(
+                    {
+                        name: "RSASSA-PKCS1-v1_5",
+                    },
+                    currentKeyPair.publicKey, // Khóa công khai
+                    signatureBytes, // Chữ ký cần xác minh
+                    data // Dữ liệu gốc
+                );
+
+                if (isValid) {
+                    verificationResult.className = 'result-box success-message';
+                    verificationResult.textContent = "Kết Quả Xác Minh: CHỮ KÝ HỢP LỆ! Thông điệp không bị thay đổi.";
+                } else {
+                    verificationResult.className = 'result-box error-message';
+                    verificationResult.textContent = "Kết Quả Xác Minh: CHỮ KÝ KHÔNG HỢP LỆ! Thông điệp đã bị thay đổi hoặc chữ ký không đúng.";
+                }
+            } catch (error) {
+                console.error("Lỗi khi kiểm tra chữ ký:", error);
+                verificationResult.className = 'result-box error-message';
+                verificationResult.textContent = "Lỗi khi kiểm tra chữ ký: " + error.message;
+            }
+        });
+    </script>
+</body>
+</html>
